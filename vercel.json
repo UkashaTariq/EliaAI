@@ -1,0 +1,76 @@
+{
+  "version": 2,
+  "name": "ghl-exa-contact-finder",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "installCommand": "npm install",
+  "functions": {
+    "api/exa-search.js": {
+      "maxDuration": 30
+    },
+    "api/ghl-import.js": {
+      "maxDuration": 60
+    },
+    "api/ghl-auth.js": {
+      "maxDuration": 15
+    },
+    "api/ghl-refresh.js": {
+      "maxDuration": 10
+    }
+  },
+  "env": {
+    "NEXT_PUBLIC_EXA_API_KEY": "@exa-api-key",
+    "NEXT_PUBLIC_GHL_CLIENT_ID": "@ghl-client-id",
+    "GHL_CLIENT_SECRET": "@ghl-client-secret",
+    "NEXTAUTH_SECRET": "@nextauth-secret",
+    "GHL_REDIRECT_URI": "@ghl-redirect-uri",
+    "EXA_API_URL": "https://api.exa.ai",
+    "GHL_API_URL": "https://services.leadconnectorhq.com"
+  },
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_EXA_API_KEY": "@exa-api-key",
+      "NEXT_PUBLIC_GHL_CLIENT_ID": "@ghl-client-id"
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/auth/callback",
+      "destination": "/api/ghl-auth"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/login",
+      "destination": "/",
+      "permanent": false
+    }
+  ],
+  "regions": ["iad1"],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}
