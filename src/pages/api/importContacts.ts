@@ -60,7 +60,7 @@ interface Contact {
   name: string;
   email?: string;
   phone?: string;
-  customFields?: Record<string, any>;
+  customFields?: Record<string, unknown>;
 }
 
 interface CreateContactRequest {
@@ -117,7 +117,7 @@ export default async function handler(
     const smartListTag = listName; // Use the exact list name as tag
 
     // Step 1: First create all contacts with the tag
-    const created: any[] = [];
+    const created: Record<string, unknown>[] = [];
     const errors: Array<{ contact: Contact; error: string }> = [];
 
     const batchSize = 10;
@@ -133,7 +133,7 @@ export default async function handler(
             const lastName = nameParts.slice(1).join(" ") || "";
 
             // Prepare contact data
-            const contactData: any = {
+            const contactData: Record<string, unknown> = {
               firstName,
               lastName,
               name: contact.name,
@@ -268,7 +268,7 @@ export default async function handler(
       if (getListsResp.ok) {
         const listsData = await getListsResp.json();
         const existingList = listsData.smartLists?.find(
-          (list: any) => list.name === listName
+          (list: { name: string }) => list.name === listName
         );
 
         if (existingList) {
