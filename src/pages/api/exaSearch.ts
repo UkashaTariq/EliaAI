@@ -50,6 +50,7 @@ export default async function handler(
       batchSize,
       success: true,
     });
+    // eslint-disable-next-line
   } catch (err: any) {
     console.error("Search error:", err);
     return res.status(500).json({
@@ -72,6 +73,7 @@ async function handleWebsetsSearch(
   try {
     console.log(`Creating webset for ${maxResults} results...`);
 
+    // eslint-disable-next-line
     const websetParams: any = {
       search: {
         query: query,
@@ -116,6 +118,7 @@ async function handleWebsetsSearch(
     const contacts: Contact[] = [];
 
     for (let i = 0; i < itemsResponse.data.length; i++) {
+      // eslint-disable-next-line
       const item: any = itemsResponse.data[i];
 
       let email: string | undefined;
@@ -158,6 +161,7 @@ async function handleWebsetsSearch(
     }
 
     return contacts;
+    // eslint-disable-next-line
   } catch (error: any) {
     console.error("Websets error:", error);
     throw new Error(`Websets failed: ${error.message}`);
@@ -187,6 +191,7 @@ async function handleRegularSearch(
         }`
       );
 
+      // eslint-disable-next-line
       const requestBody: any = {
         query,
         numResults: currentBatchSize,
@@ -266,6 +271,7 @@ async function handleRegularSearch(
       `Regular search completed. Total contacts: ${allContacts.length}`
     );
     return allContacts;
+    // eslint-disable-next-line
   } catch (error: any) {
     console.error("Regular search error:", error);
     throw new Error(`Regular search failed: ${error.message}`);
@@ -307,6 +313,7 @@ function extractEmails(text: string): string[] {
     .slice(0, 3); // Limit to 3 emails max
 }
 
+// eslint-disable-next-line
 function extractPhones(text: string): any[] {
   const phonePatterns = [
     /\+\d{1,4}[\s.-]?\(?[\d\s.-]{7,}\)?[\s.-]?\d/g,

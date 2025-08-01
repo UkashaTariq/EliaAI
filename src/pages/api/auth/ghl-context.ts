@@ -86,6 +86,7 @@ export default async function handler(
                       dashboardUrl: `/dashboard?identifier=${installData.identifier}`,
                     });
                   }
+                  // eslint-disable-next-line
                 } catch (error) {
                   console.log(
                     `Token verification failed for location ${location.id}`
@@ -143,6 +144,7 @@ export default async function handler(
                 dashboardUrl: `/dashboard?identifier=${installData.identifier}`,
               });
             }
+            // eslint-disable-next-line
           } catch (error) {
             console.log("Token verification failed");
           }

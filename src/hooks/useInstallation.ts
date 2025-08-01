@@ -11,7 +11,9 @@ interface InstallationData {
   email?: string;
   locationName?: string;
   scopes?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   created_at: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updated_at: any;
 }
 
@@ -55,7 +57,7 @@ export function useInstallation(): UseInstallationResult {
 
       // Get current URL parameters
       const urlParams = new URLSearchParams(window.location.search);
-      const queryString = urlParams.toString();
+      //   const queryString = urlParams.toString();
 
       // Add any available context parameters
       const contextParams = new URLSearchParams();

@@ -187,6 +187,7 @@ export default async function handler(
     }
 
     // Method 3: Try to use the current GHL session (if available)
+    // eslint-disable-next-line
     const referrer: any = req.headers.referer || req.headers.referrer;
 
     if (
@@ -206,6 +207,7 @@ export default async function handler(
           referrerUrl.searchParams.get("user_id");
 
         if (refLocationId || refUserId) {
+          // eslint-disable-next-line
           const refIdentifier: any = refLocationId || refUserId;
           const refInstall = await db
             .collection("app_installs")

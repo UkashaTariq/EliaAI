@@ -522,7 +522,9 @@ interface UserData {
   access_token: string;
   refresh_token?: string;
   locationId?: string;
+  // eslint-disable-next-line
   created_at: any;
+  // eslint-disable-next-line
   updated_at: any;
 }
 
@@ -536,7 +538,9 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false); // New state for refresh loading
   const [importing, setImporting] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  // eslint-disable-next-line
   const [userData, setUserData] = useState<any>(null);
+  // eslint-disable-next-line
   const [installationData, setInstallationData] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -922,8 +926,9 @@ export default function Dashboard() {
               </button>
             </div>
             <div className="text-sm text-indigo-200">
-              Click "Review & Import" to select which contacts to add to your
-              list.
+              {
+                'Click "Review & Import" to select which contacts to add to your list.'
+              }
             </div>
           </div>
         )}

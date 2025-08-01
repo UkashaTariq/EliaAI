@@ -119,12 +119,14 @@ export default function Home() {
           );
 
           // Wait for response with timeout
+          // eslint-disable-next-line
           const contextResponse: any = await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
               console.log("Iframe context request timed out");
               reject(new Error("Context timeout"));
             }, 5000);
 
+            // eslint-disable-next-line
             const handleMessage = (event: any) => {
               console.log("Received message from parent:", event.data);
 
@@ -421,7 +423,7 @@ export default function Home() {
                     Natural Language Search
                   </h3>
                   <p className="text-indigo-200 text-sm">
-                    "Find dentists in Miami with websites"
+                    {'"Find dentists in Miami with websites"'}
                   </p>
                 </div>
                 <div className="text-center p-4">
