@@ -61,26 +61,27 @@ export default async function handler(
     const limitCheck = await checkSearchLimit(session.user.identifier);
 
     // Block enrichment for trial users
-    if (enrichContacts && limitCheck.subscription.planId === 'trial') {
+    if (enrichContacts && limitCheck.subscription.planId === "trial") {
       return res.status(403).json({
         error: "Contact enrichment is not available during trial period",
-        message: "Subscribe to unlock unlimited searches and contact enrichment features",
+        message:
+          "Subscribe to unlock unlimited searches and contact enrichment features",
         upgradeRequired: true,
         subscription: {
           planName: limitCheck.subscription.planName,
           planId: limitCheck.subscription.planId,
           trialDaysRemaining: limitCheck.trialDaysRemaining,
-        }
+        },
       });
     }
 
     if (!limitCheck.canSearch) {
-      const errorMessage = limitCheck.isTrialExpired 
+      const errorMessage = limitCheck.isTrialExpired
         ? "Your 7-day trial has expired. Subscribe to continue using EliaAI."
-        : limitCheck.subscription.planId === 'trial'
+        : limitCheck.subscription.planId === "trial"
         ? "Daily search limit reached. You'll get 3 more searches tomorrow, or subscribe for unlimited searches."
         : "Search limit exceeded";
-        
+
       return res.status(429).json({
         error: errorMessage,
         subscription: {
@@ -142,12 +143,12 @@ export default async function handler(
         query,
         timestamp: new Date(),
         contactsFound: contacts.length,
-        contacts: contacts.map(contact => {
+        contacts: contacts.map((contact) => {
           const contactData: Partial<Contact> = {
             id: contact.id,
             name: contact.name,
           };
-          
+
           // Only include defined values to avoid Firestore errors
           const typedContact = contact as Contact;
           if (typedContact.email) {
@@ -162,7 +163,7 @@ export default async function handler(
           if (contact.summary) {
             contactData.summary = contact.summary;
           }
-          
+
           return contactData as Contact;
         }),
         searchType: "manual",
@@ -186,10 +187,10 @@ export default async function handler(
       success: true,
       searchId, // Include search ID in response
       enrichmentNote: enrichContacts
-        ? limitCheck.subscription.planId === 'trial' 
+        ? limitCheck.subscription.planId === "trial"
           ? "Trial users cannot access contact enrichment. Subscribe for unlimited searches and enrichment."
           : "Contact enrichment (email/phone) included - this may incur additional charges for paid plans."
-        : limitCheck.subscription.planId === 'trial'
+        : limitCheck.subscription.planId === "trial"
         ? "Basic search results only. Subscribe for contact enrichment."
         : "Basic search results only. Use /api/enrichContacts for email/phone enrichment.",
       subscription: {
@@ -212,7 +213,7 @@ export default async function handler(
     }
 
     return res.status(500).json({
-      error: "Search failed",
+      error: "Search failed due to some reason",
       details: err?.message || "Unknown error",
       success: false,
     });
