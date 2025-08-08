@@ -1,5 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { db } from "../../lib/firebaseAdmin";
+import { v4 as uuidv4 } from "uuid";
+import type {
+  ImportHistory,
+  SubscriptionRecord,
+} from "../../lib/firestore-schema";
+import { getSession } from "../../lib/session-utils";
+import { getValidAccessToken } from "../../lib/token-refresh";
 
 interface Contact {
   name: string;
@@ -14,6 +21,10 @@ interface CreateContactRequest {
   contacts: Contact[];
   locationId?: string;
   additionalTags?: string[]; // Optional additional tags
+  searchId?: string; // ID of the search that generated these contacts
+  query?: string; // Original search query
+  listName?: string; // Name of the list for import
+  enrichedImport?: boolean; // Flag to indicate if this is an enriched import
 }
 
 interface InstallData {
@@ -34,11 +45,25 @@ export default async function handler(
   }
 
   try {
+    // Check authentication
+    const session = await getSession(req, res);
+
+    if (!session.user?.isLoggedIn) {
+      return res.status(401).json({
+        error: "Not authenticated",
+        requiresAuth: true,
+      });
+    }
+
     const {
       identifier,
       contacts,
       locationId,
       additionalTags = [],
+      searchId,
+      query,
+      listName,
+      enrichedImport = false,
     } = req.body as CreateContactRequest;
 
     // Validate required fields
@@ -50,7 +75,45 @@ export default async function handler(
       return res.status(400).json({ error: "No contacts provided" });
     }
 
-    // Get access token from Firebase
+    // Check if this is an enriched import and user is on trial
+    // if (enrichedImport) {
+    //   try {
+    //     const subscriptionDoc = await db.collection('subscriptions').doc(session.user.identifier).get();
+
+    //     if (subscriptionDoc.exists) {
+    //       const subscription = subscriptionDoc.data() as SubscriptionRecord;
+
+    //       // Block enriched imports for trial users
+    //       if (subscription.planId === 'trial') {
+    //         return res.status(403).json({
+    //           error: "Contact enrichment during import is not available during trial period",
+    //           message: "Subscribe to unlock unlimited searches and contact enrichment features",
+    //           upgradeRequired: true,
+    //           subscription: {
+    //             planName: subscription.planName,
+    //             planId: subscription.planId,
+    //           }
+    //         });
+    //       }
+    //     }
+    //   } catch (subscriptionError) {
+    //     console.error('Error checking subscription for import:', subscriptionError);
+    //     // Continue with import if subscription check fails
+    //   }
+    // }
+
+    // Get valid access token (with automatic refresh if needed)
+    const validAccessToken = await getValidAccessToken(identifier);
+    
+    if (!validAccessToken) {
+      return res.status(401).json({ 
+        error: "Invalid or expired access token",
+        tokenExpired: true,
+        message: "Please re-authenticate with GoHighLevel"
+      });
+    }
+
+    // Get additional data from Firebase
     const snap = await db.collection("app_installs").doc(identifier).get();
     if (!snap.exists) {
       return res.status(404).json({ error: "Install not found" });
@@ -119,7 +182,7 @@ export default async function handler(
               {
                 method: "POST",
                 headers: {
-                  Authorization: `Bearer ${tokens.access_token}`,
+                  Authorization: `Bearer ${validAccessToken}`,
                   "Content-Type": "application/json",
                   Version: "2021-07-28",
                 },
@@ -150,7 +213,7 @@ export default async function handler(
                   )}`,
                   {
                     headers: {
-                      Authorization: `Bearer ${tokens.access_token}`,
+                      Authorization: `Bearer ${validAccessToken}`,
                       Version: "2021-07-28",
                     },
                   }
@@ -170,7 +233,7 @@ export default async function handler(
                       {
                         method: "PUT",
                         headers: {
-                          Authorization: `Bearer ${tokens.access_token}`,
+                          Authorization: `Bearer ${validAccessToken}`,
                           "Content-Type": "application/json",
                           Version: "2021-07-28",
                         },
@@ -336,6 +399,42 @@ export default async function handler(
       }
     }
 
+    // Store import history
+    if (created.length > 0 && searchId && query) {
+      try {
+        const importId = uuidv4();
+        const importHistory: ImportHistory = {
+          identifier,
+          locationId: location,
+          importId,
+          searchId,
+          query,
+          listName: listName || "Imported Contacts",
+          contactsImported: created.length,
+          contacts: created.map((contact) => ({
+            id: contact.id,
+            name: contact.name || contact.firstName + " " + contact.lastName,
+            email: contact.email,
+            phone: contact.phone,
+            url: contact.website || contact.customField?.website,
+            summary: contact.notes || contact.customField?.notes,
+          })),
+          timestamp: new Date(),
+          ghlResponse: {
+            created: created.length,
+            errors: errors.length,
+            smartListId,
+          },
+          created_at: new Date(),
+        };
+
+        await db.collection("import_history").doc(importId).set(importHistory);
+      } catch (historyError) {
+        console.error("Failed to store import history:", historyError);
+        // Don't fail the request if history storage fails
+      }
+    }
+
     // Return response
     res.status(200).json({
       success: true,
@@ -357,6 +456,9 @@ export default async function handler(
           }`,
       contacts: created,
       errors: errors.length > 0 ? errors : undefined,
+      enrichmentNote: enrichedImport
+        ? "Enriched contact import completed - this may incur additional charges for paid plans."
+        : "Basic contact import completed. Use enriched import for email/phone data.",
     });
   } catch (error) {
     console.error("Handler error:", error);

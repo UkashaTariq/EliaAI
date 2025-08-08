@@ -504,9 +504,15 @@ import {
   CheckCircle2,
   Circle,
   Loader2,
-  User,
-  Building,
+  // User,
+  // Building,
+  // Settings,
+  // LogOut,
+  Crown,
 } from "lucide-react";
+// Subscription management moved to /subscription route
+import UpgradeModal from "../components/UpgradeModal";
+import ImportHistoryCards from "../components/ImportHistoryCards";
 
 interface Contact {
   id: string;
@@ -519,13 +525,35 @@ interface Contact {
 
 interface UserData {
   identifier: string;
-  access_token: string;
-  refresh_token?: string;
-  locationId?: string;
-  // eslint-disable-next-line
-  created_at: any;
-  // eslint-disable-next-line
-  updated_at: any;
+  locationId: string;
+  userId?: string;
+  email?: string;
+  name?: string;
+  locationName?: string;
+  loginTime: number;
+  lastActivity: number;
+}
+
+interface SubscriptionData {
+  planId: string;
+  planName: string;
+  status: string;
+  searchLimit?: number;
+  searchesUsed?: number;
+  currentPeriodEnd: Date;
+  billingSource: string;
+  monthlyFee?: number;
+  enrichmentPrice?: number;
+  enrichmentsUsed?: number;
+  enrichmentCostAccrued?: number;
+  isWhiteLabel?: boolean;
+  contactLimit?: number;
+}
+
+interface SessionData {
+  authenticated: boolean;
+  user: UserData;
+  subscription?: SubscriptionData; // Make subscription optional
 }
 
 export default function Dashboard() {
@@ -535,163 +563,137 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<string[]>([]);
   const [listName, setListName] = useState("My List");
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false); // New state for refresh loading
+  const [refreshing, setRefreshing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  // eslint-disable-next-line
-  const [userData, setUserData] = useState<any>(null);
-  // eslint-disable-next-line
-  const [installationData, setInstallationData] = useState<any>(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [currentSearchId, setCurrentSearchId] = useState<string | null>(null);
+  const [currentQuery, setCurrentQuery] = useState<string>("");
+  const [importHistory, setImportHistory] = useState<
+    Array<{
+      importId: string;
+      searchId: string;
+      query: string;
+      listName: string;
+      contactsImported: number;
+      contacts: Contact[];
+      timestamp: string;
+      ghlResponse?: {
+        created: number;
+        errors: number;
+        smartListId?: string;
+      };
+    }>
+  >([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  console.log("Loading history state:", loadingHistory); // Keep variable used
 
-  // Check authentication on mount
+  // Check session on mount
   useEffect(() => {
-    checkAuth();
+    checkSession();
   }, []);
 
-  const checkAuth = async () => {
-    console.log("Starting authentication check...");
-
-    // Method 1: Check URL identifier first (OAuth callback)
-    const identifier = router.query.identifier as string;
-
-    if (identifier) {
-      console.log("Found identifier in URL:", identifier);
-      try {
-        const response = await fetch(
-          `/api/auth/verify?identifier=${identifier}`
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          setUserData(data);
-          setAuthLoading(false);
-          return;
-        } else {
-          console.error("Invalid identifier in URL");
-        }
-      } catch (error) {
-        console.error("Error verifying identifier:", error);
-      }
+  // Load import history
+  const loadImportHistory = async () => {
+    if (!sessionData) {
+      console.log("No sessionData, skipping import history load");
+      return;
     }
 
-    // Method 2: Try installation context detection (for marketplace installs)
-    console.log("Attempting installation context detection...");
-
+    console.log("Loading import history...");
+    setLoadingHistory(true);
     try {
-      // Get URL parameters for context
-      const urlParams = new URLSearchParams(window.location.search);
-      const contextParams = new URLSearchParams();
+      const response = await fetch("/api/history/import?limit=10");
+      console.log("Import history API response:", response.status);
 
-      [
-        "location_id",
-        "locationId",
-        "user_id",
-        "userId",
-        "company_id",
-        "companyId",
-        "account_id",
-        "accountId",
-      ].forEach((param) => {
-        const value = urlParams.get(param);
-        if (value) contextParams.set(param, value);
-      });
-
-      const contextResponse = await fetch(
-        `/api/auth/installation-context?${contextParams.toString()}`,
-        {
-          headers: {
-            "X-Requested-With": "XMLHttpRequest",
-            "X-Current-URL": window.location.href,
-            "X-Referrer": document.referrer || "",
-          },
-        }
-      );
-
-      if (contextResponse.ok) {
-        const contextData = await contextResponse.json();
-        console.log("Installation context result:", contextData);
-
-        if (contextData.success && contextData.installation) {
-          console.log("Found valid installation context");
-
-          // Set installation data
-          setInstallationData(contextData.installation);
-
-          // Set user data for compatibility
-          setUserData({
-            identifier: contextData.installation.identifier,
-            locationId: contextData.installation.locationId,
-            userId: contextData.installation.userId,
-            name: contextData.installation.name,
-            email: contextData.installation.email,
-            created_at: contextData.installation.created_at,
-            updated_at: contextData.installation.updated_at,
-          });
-
-          // Update URL with detected identifier
-          router.replace(
-            `/dashboard?identifier=${contextData.installation.identifier}`
-          );
-          setAuthLoading(false);
-          return;
-        }
-      }
-
-      // Method 3: Try other detection methods as fallback
-      const fallbackMethods = ["ghl-context", "detect-user"];
-
-      for (const method of fallbackMethods) {
-        try {
-          console.log(`Trying fallback method: ${method}`);
-
-          const fallbackResponse = await fetch(
-            `/api/auth/${method}?${contextParams.toString()}`
-          );
-
-          if (fallbackResponse.ok) {
-            const fallbackData = await fallbackResponse.json();
-
-            if (
-              fallbackData.authenticated ||
-              (fallbackData.detected && fallbackData.authenticated)
-            ) {
-              console.log(`Fallback method ${method} successful`);
-
-              const identifier = fallbackData.identifier;
-              router.replace(`/dashboard?identifier=${identifier}`);
-
-              setUserData({
-                identifier: identifier,
-                locationId: fallbackData.locationId,
-                userId: fallbackData.userId,
-                name: fallbackData.name,
-                email: fallbackData.email,
-                created_at: fallbackData.created_at,
-                updated_at: fallbackData.updated_at,
-              });
-
-              setAuthLoading(false);
-              return;
-            }
-          }
-        } catch (error) {
-          console.log(`Fallback method ${method} failed:`, error);
-        }
+      if (response.ok) {
+        const data = await response.json();
+        console.log("Import history data received:", data);
+        setImportHistory(data.importHistory || []);
+        console.log(
+          "Import history state updated, length:",
+          data.importHistory?.length || 0
+        );
+      } else {
+        console.error(
+          "Import history API error:",
+          response.status,
+          await response.text()
+        );
       }
     } catch (error) {
-      console.error("Installation context detection failed:", error);
+      console.error("Failed to load import history:", error);
+    } finally {
+      setLoadingHistory(false);
     }
+  };
 
-    // No valid authentication found, redirect to auth
-    console.log("No authentication found, redirecting to login");
-    router.push("/api/auth/start");
+  // Load import history when session is established
+  useEffect(() => {
+    if (sessionData && !authLoading) {
+      loadImportHistory();
+    }
+  }, [sessionData, authLoading]);
+
+  // Debug import history state changes
+  useEffect(() => {
+    console.log(
+      "Import history state updated:",
+      importHistory.length,
+      importHistory
+    );
+  }, [importHistory]);
+
+  const checkSession = async () => {
+    try {
+      const response = await fetch("/api/auth/session");
+      const data = await response.json();
+
+      if (data.authenticated && data.user) {
+        // User is authenticated, set session data even if subscription is missing
+        setSessionData(data);
+        setAuthLoading(false);
+
+        if (!data.subscription) {
+          console.log(
+            "User authenticated but subscription missing, will show free plan"
+          );
+        }
+
+        // Check URL params for success/cancel from GHL
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get("success") === "true") {
+          // Refresh session to get updated subscription
+          setTimeout(() => window.location.reload(), 1000);
+        }
+      } else if (data.tokenExpired) {
+        console.log("JWT token expired, redirecting to re-authentication");
+        router.push("/api/auth/start");
+      } else if (data.locationChanged) {
+        console.log("Location changed, redirecting to auth");
+        router.push("/api/auth/start");
+      } else {
+        console.log("No valid session, redirecting to auth");
+        router.push("/api/auth/start");
+      }
+    } catch (error) {
+      console.error("Session check failed:", error);
+      router.push("/api/auth/start");
+    }
   };
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      router.push("/");
+      const response = await fetch("/api/auth/session", { method: "DELETE" });
+      if (response.ok) {
+        router.push("/");
+      } else {
+        console.error("Logout failed");
+        router.push("/");
+      }
     } catch (error) {
       console.error("Logout failed:", error);
       router.push("/");
@@ -714,22 +716,57 @@ export default function Dashboard() {
 
   const search = async () => {
     if (!query.trim()) return;
+
     setLoading(true);
+    setSearchError(null);
+
     try {
       const res = await fetch("/api/exaSearch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ 
+          query,
+          enrichContacts: true  // Enable email/phone enrichment
+        }),
       });
+
+      const data = await res.json();
+
       if (res.ok) {
-        const data = await res.json();
         setContacts(data.contacts || []);
         setSelected(data.contacts.map((c: Contact) => c.id));
         setShowModal(true);
+
+        // Store current search info for potential import
+        setCurrentSearchId(data.searchId);
+        setCurrentQuery(query);
+
+        // Refresh import history (in case new imports were made)
+        loadImportHistory();
+
+        // Update session data with new usage
+        if (sessionData && data.subscription && sessionData.subscription) {
+          setSessionData({
+            ...sessionData,
+            subscription: {
+              ...sessionData.subscription,
+              searchesUsed: (sessionData.subscription.searchesUsed || 0) + 1,
+            },
+          });
+        }
+      } else if (res.status === 429 && data.upgradeRequired) {
+        // Search limit exceeded
+        setSearchError(data.error);
+        setShowUpgradeModal(true);
       } else {
-        const text = await res.text();
-        alert(`Search failed: ${text}`);
+        const errorMsg = data.error || "Search failed";
+        setSearchError(errorMsg);
+        alert(errorMsg);
       }
+    } catch (error) {
+      const errorMsg = "Network error during search";
+      setSearchError(errorMsg);
+      alert(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -743,6 +780,7 @@ export default function Dashboard() {
     }
 
     setRefreshing(true);
+    setSearchError(null);
 
     // Clear current state
     setContacts([]);
@@ -755,14 +793,18 @@ export default function Dashboard() {
         body: JSON.stringify({ query }),
       });
 
+      const data = await res.json();
+
       if (res.ok) {
-        const data = await res.json();
-        // Set new data
         setContacts(data.contacts || []);
         setSelected(data.contacts.map((c: Contact) => c.id));
+      } else if (res.status === 429 && data.upgradeRequired) {
+        setSearchError(data.error);
+        setShowUpgradeModal(true);
       } else {
-        const text = await res.text();
-        alert(`Refresh failed: ${text}`);
+        const errorMsg = data.error || "Refresh failed";
+        setSearchError(errorMsg);
+        alert(errorMsg);
       }
     } catch (error) {
       console.error("Refresh error:", error);
@@ -773,8 +815,10 @@ export default function Dashboard() {
   };
 
   const handleImport = async () => {
-    const identifier = router.query.identifier as string;
-    if (!identifier) return alert("No identifier");
+    if (!sessionData?.user) {
+      alert("Authentication required");
+      return;
+    }
 
     const payload = contacts.filter((c) => selected.includes(c.id));
     if (payload.length === 0) return;
@@ -785,13 +829,19 @@ export default function Dashboard() {
       const res = await fetch("/api/importContacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, contacts: payload, listName }),
+        body: JSON.stringify({
+          identifier: sessionData.user.identifier,
+          contacts: payload,
+          listName,
+          searchId: currentSearchId,
+          query: currentQuery,
+        }),
       });
 
       if (res.ok) {
         const result = await res.json();
         alert(
-          `Contacts imported successfully! ${result.created} contacts added to "${result.listName}"`
+          `Contacts imported successfully! ${result.created} contacts added"`
         );
 
         setTimeout(() => {
@@ -833,7 +883,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800">
       {/* Header */}
-      <div className="bg-slate-900/80 backdrop-blur-sm shadow-lg border-b border-indigo-800/30">
+      {/* <div className="bg-slate-900/80 backdrop-blur-sm shadow-lg border-b border-indigo-800/30">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -849,37 +899,122 @@ export default function Dashboard() {
             </div>
 
             <div className="flex items-center gap-4">
-              {userData && (
+              {sessionData?.user && (
                 <div className="flex items-center gap-6 text-indigo-200">
                   <div className="flex items-center gap-2">
                     <User className="w-4 h-4" />
-                    <span className="text-sm">{userData.name || "User"}</span>
+                    <span className="text-sm">{sessionData.user.name || "User"}</span>
                   </div>
-                  {installationData?.locationName && (
+                  {sessionData.user.locationName && (
                     <div className="flex items-center gap-2">
                       <Building className="w-4 h-4" />
                       <span className="text-sm">
-                        {installationData.locationName}
+                        {sessionData.user.locationName}
                       </span>
                     </div>
                   )}
-                  <div className="text-xs text-indigo-300">
-                    ID: {userData.identifier}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setShowUpgradeModal(true)}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                      title="Manage Subscription"
+                    >
+                      <Settings className="w-4 h-4 text-indigo-300" />
+                    </button>
+                    <button
+                      onClick={handleLogout}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                      title="Logout"
+                    >
+                      <LogOut className="w-4 h-4 text-indigo-300" />
+                    </button>
                   </div>
                 </div>
               )}
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* Quick Subscription Info */}
+        {sessionData && sessionData.subscription && (
+          <div className="mb-8">
+            <div className="bg-slate-800/50 rounded-xl p-4 border border-indigo-700/30 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="p-2 bg-indigo-600/20 rounded-lg">
+                  <Crown className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-white">
+                    {sessionData.subscription.planName}
+                  </h3>
+                  <p className="text-sm text-indigo-300">
+                    {sessionData.subscription.planId === "trial"
+                      ? `${
+                          (sessionData.subscription.searchLimit || 0) -
+                          (sessionData.subscription.searchesUsed || 0)
+                        } searches remaining today`
+                      : `${
+                          sessionData.subscription.enrichmentsUsed || 0
+                        } contacts enriched this period`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                {/* <button
+                  onClick={() => router.push("/subscription")}
+                  className="px-4 py-2 border border-indigo-600/50 text-indigo-200 hover:bg-indigo-900/30 rounded-lg transition-colors"
+                >
+                  Manage Subscription
+                </button> */}
+                <button
+                  onClick={() => setShowUpgradeModal(true)}
+                  className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-lg transition-all"
+                >
+                  {sessionData.subscription.planId === "trial"
+                    ? "Subscribe"
+                    : "Upgrade Plan"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Results Preview */}
+        {contacts.length > 0 && !showModal && (
+          <div className="bg-white/10 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">
+                Found {contacts.length} contacts
+              </h3>
+              <button
+                onClick={() => setShowModal(true)}
+                className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-medium rounded-lg transition-all shadow-lg"
+              >
+                Review & Import
+              </button>
+            </div>
+            <div className="text-sm text-indigo-200">
+              {
+                'Click "Review & Import" to select which contacts to add to your list.'
+              }
+            </div>
+          </div>
+        )}
+
         {/* Search Section */}
         <div className="bg-white/10 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 mb-8">
           <h2 className="text-lg font-semibold text-white mb-4">
             Search Businesses
           </h2>
+
+          {searchError && (
+            <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg">
+              <p className="text-red-200 text-sm">{searchError}</p>
+            </div>
+          )}
           <div className="flex gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-indigo-300 w-5 h-5" />
@@ -909,29 +1044,24 @@ export default function Dashboard() {
               )}
             </button>
           </div>
-        </div>
 
-        {/* Results Preview */}
-        {contacts.length > 0 && !showModal && (
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white">
-                Found {contacts.length} contacts
-              </h3>
-              <button
-                onClick={() => setShowModal(true)}
-                className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-medium rounded-lg transition-all shadow-lg"
-              >
-                Review & Import
-              </button>
-            </div>
-            <div className="text-sm text-indigo-200">
-              {
-                'Click "Review & Import" to select which contacts to add to your list.'
-              }
-            </div>
+          {/* Import History - Enriched Contacts */}
+          <div className="mt-6">
+            <h3 className="text-sm font-medium text-indigo-300 mb-3">
+              Enriched Contacts
+            </h3>
+            <ImportHistoryCards
+              importHistory={importHistory}
+              isLoading={loadingHistory}
+              onReimport={(searchId, query) => {
+                setQuery(query);
+                setCurrentQuery(query);
+                // Trigger a new search with the same query
+                search();
+              }}
+            />
           </div>
-        )}
+        </div>
       </div>
 
       {/* Modal */}
@@ -1160,6 +1290,15 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Upgrade Modal */}
+      {sessionData && (
+        <UpgradeModal
+          isOpen={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          currentPlan={sessionData.subscription?.planId || "free"}
+        />
       )}
     </div>
   );

@@ -1,4 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { getSession } from "../../lib/session-utils";
+import { checkSearchLimit, recordSearchUsage } from "../../lib/usage-tracking";
+import { v4 as uuidv4 } from "uuid";
+import { db } from "../../lib/firebaseAdmin";
+import type { SearchHistory } from "../../lib/firestore-schema";
 
 interface Contact {
   id: string;
@@ -11,35 +16,165 @@ interface Contact {
   location?: string;
 }
 
+interface BasicContact {
+  id: string;
+  name: string;
+  url?: string;
+  summary?: string;
+  // Basic contacts don't include email/phone - that requires enrichment
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const {
-    query,
-    maxResults = 100,
-    useWebsets = false,
-    batchSize = 100,
-  } = req.body as {
-    query?: string;
-    maxResults?: number;
-    useWebsets?: boolean;
-    batchSize?: number;
-  };
-
-  if (!query) return res.status(400).json({ error: "Missing query" });
-
   try {
-    let contacts: Contact[] = [];
+    // Check authentication
+    const session = await getSession(req, res);
+
+    if (!session.user?.isLoggedIn) {
+      return res.status(401).json({
+        error: "Not authenticated",
+        requiresAuth: true,
+      });
+    }
+
+    const {
+      query,
+      maxResults = 100,
+      useWebsets = false,
+      batchSize = 100,
+      enrichContacts = false, // New flag for backward compatibility
+    } = req.body as {
+      query?: string;
+      maxResults?: number;
+      useWebsets?: boolean;
+      batchSize?: number;
+      enrichContacts?: boolean;
+    };
+
+    if (!query) return res.status(400).json({ error: "Missing query" });
+
+    // Check search limits
+    const limitCheck = await checkSearchLimit(session.user.identifier);
+
+    // Block enrichment for trial users
+    if (enrichContacts && limitCheck.subscription.planId === 'trial') {
+      return res.status(403).json({
+        error: "Contact enrichment is not available during trial period",
+        message: "Subscribe to unlock unlimited searches and contact enrichment features",
+        upgradeRequired: true,
+        subscription: {
+          planName: limitCheck.subscription.planName,
+          planId: limitCheck.subscription.planId,
+          trialDaysRemaining: limitCheck.trialDaysRemaining,
+        }
+      });
+    }
+
+    if (!limitCheck.canSearch) {
+      const errorMessage = limitCheck.isTrialExpired 
+        ? "Your 7-day trial has expired. Subscribe to continue using EliaAI."
+        : limitCheck.subscription.planId === 'trial'
+        ? "Daily search limit reached. You'll get 3 more searches tomorrow, or subscribe for unlimited searches."
+        : "Search limit exceeded";
+        
+      return res.status(429).json({
+        error: errorMessage,
+        subscription: {
+          planName: limitCheck.subscription.planName,
+          searchLimit: limitCheck.subscription.searchLimit,
+          searchesUsed: limitCheck.subscription.searchesUsed,
+          remainingSearches: limitCheck.remainingSearches,
+          isTrialExpired: limitCheck.isTrialExpired,
+          trialDaysRemaining: limitCheck.trialDaysRemaining,
+        },
+        upgradeRequired: true,
+        isTrialExpired: limitCheck.isTrialExpired,
+      });
+    }
+
+    let contacts: BasicContact[] = [];
 
     if (useWebsets) {
       // Use Exa Websets approach with batching for large results
-      contacts = await handleWebsetsSearch(query, maxResults, batchSize);
+      contacts = await handleWebsetsSearch(
+        query,
+        maxResults,
+        batchSize,
+        enrichContacts
+      );
     } else {
       // Use regular Exa search with batching
-      contacts = await handleRegularSearch(query, maxResults, batchSize);
+      contacts = await handleRegularSearch(
+        query,
+        maxResults,
+        batchSize,
+        enrichContacts
+      );
+    }
+
+    // Generate unique search ID
+    const searchId = uuidv4();
+
+    // Record search usage
+    await recordSearchUsage(
+      session.user.identifier,
+      session.user.locationId,
+      query,
+      contacts.length
+    );
+
+    // Store search history
+    try {
+      console.log(
+        "Storing search history for:",
+        session.user.identifier,
+        "query:",
+        query
+      );
+      const searchHistory: SearchHistory = {
+        identifier: session.user.identifier,
+        locationId: session.user.locationId,
+        searchId,
+        query,
+        timestamp: new Date(),
+        contactsFound: contacts.length,
+        contacts: contacts.map(contact => {
+          const contactData: Partial<Contact> = {
+            id: contact.id,
+            name: contact.name,
+          };
+          
+          // Only include defined values to avoid Firestore errors
+          const typedContact = contact as Contact;
+          if (typedContact.email) {
+            contactData.email = typedContact.email;
+          }
+          if (typedContact.phone) {
+            contactData.phone = typedContact.phone;
+          }
+          if (contact.url) {
+            contactData.url = contact.url;
+          }
+          if (contact.summary) {
+            contactData.summary = contact.summary;
+          }
+          
+          return contactData as Contact;
+        }),
+        searchType: "manual",
+        // Note: search history stores basic contacts only, enrichment is tracked separately
+        created_at: new Date(),
+      };
+
+      await db.collection("search_history").doc(searchId).set(searchHistory);
+      console.log("Search history stored successfully with ID:", searchId);
+    } catch (historyError) {
+      console.error("Failed to store search history:", historyError);
+      // Don't fail the request if history storage fails
     }
 
     return res.status(200).json({
@@ -49,10 +184,33 @@ export default async function handler(
       method: useWebsets ? "websets" : "regular",
       batchSize,
       success: true,
+      searchId, // Include search ID in response
+      enrichmentNote: enrichContacts
+        ? limitCheck.subscription.planId === 'trial' 
+          ? "Trial users cannot access contact enrichment. Subscribe for unlimited searches and enrichment."
+          : "Contact enrichment (email/phone) included - this may incur additional charges for paid plans."
+        : limitCheck.subscription.planId === 'trial'
+        ? "Basic search results only. Subscribe for contact enrichment."
+        : "Basic search results only. Use /api/enrichContacts for email/phone enrichment.",
+      subscription: {
+        remainingSearches: limitCheck.remainingSearches - 1, // After this search
+        searchLimit: limitCheck.subscription.searchLimit,
+        planName: limitCheck.subscription.planName,
+      },
     });
     // eslint-disable-next-line
   } catch (err: any) {
     console.error("Search error:", err);
+
+    // Check if it's a usage limit error
+    if (err.message?.includes("Search limit exceeded")) {
+      return res.status(429).json({
+        error: "Search limit exceeded",
+        details: err.message,
+        upgradeRequired: true,
+      });
+    }
+
     return res.status(500).json({
       error: "Search failed",
       details: err?.message || "Unknown error",
@@ -64,8 +222,9 @@ export default async function handler(
 async function handleWebsetsSearch(
   query: string,
   maxResults: number,
-  batchSize: number
-): Promise<Contact[]> {
+  batchSize: number,
+  enrichContacts: boolean = false
+): Promise<BasicContact[]> {
   // Dynamic import to avoid TypeScript issues
   const { default: Exa } = await import("exa-js");
   const exa = new Exa(process.env.EXA_API_KEY);
@@ -115,11 +274,11 @@ async function handleWebsetsSearch(
 
     console.log(`Total items fetched: ${itemsResponse.data.length}`);
 
-    const contacts: Contact[] = [];
+    const contacts: BasicContact[] = [];
 
     for (let i = 0; i < itemsResponse.data.length; i++) {
-      // eslint-disable-next-line
-      const item: any = itemsResponse.data[i];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const item = itemsResponse.data[i] as any;
 
       let email: string | undefined;
       let phone: string | undefined;
@@ -127,7 +286,7 @@ async function handleWebsetsSearch(
       // Try to extract from enrichments
       if (item.enrichments) {
         const enrichmentEntries = Object.entries(item.enrichments);
-        for (const [key, value] of enrichmentEntries) {
+        for (const [, value] of enrichmentEntries) {
           if (value && typeof value === "string") {
             if (isEmailLike(value)) {
               email = cleanEmail(value);
@@ -147,17 +306,21 @@ async function handleWebsetsSearch(
         phone = phone || textPhones[0];
       }
 
-      // Only add if we have contact info
-      if (email || phone) {
-        contacts.push({
-          id: (i + 1).toString(),
-          name: item.title || "Unknown Business",
-          email,
-          phone,
-          url: item.url,
-          summary: item.summary,
-        });
+      // Add basic contact info (enrichment is separate)
+      const basicContact: BasicContact = {
+        id: (i + 1).toString(),
+        name: item.title || "Unknown Business",
+        url: item.url,
+        summary: item.summary,
+      };
+
+      // Only include email/phone if enrichContacts is true (for backward compatibility)
+      if (enrichContacts && (email || phone)) {
+        (basicContact as Contact).email = email;
+        (basicContact as Contact).phone = phone;
       }
+
+      contacts.push(basicContact);
     }
 
     return contacts;
@@ -171,12 +334,13 @@ async function handleWebsetsSearch(
 async function handleRegularSearch(
   query: string,
   maxResults: number,
-  batchSize: number
-): Promise<Contact[]> {
+  batchSize: number,
+  enrichContacts: boolean = false
+): Promise<BasicContact[]> {
   try {
     console.log(`Starting regular search for ${maxResults} results...`);
 
-    const allContacts: Contact[] = [];
+    const allContacts: BasicContact[] = [];
     let processedResults = 0;
     let startCrawlDate: string | null = null;
 
@@ -191,7 +355,7 @@ async function handleRegularSearch(
         }`
       );
 
-      // eslint-disable-next-line
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const requestBody: any = {
         query,
         numResults: currentBatchSize,
@@ -239,17 +403,21 @@ async function handleRegularSearch(
         const emails = extractEmails(result.text || "");
         const phones = extractPhones(result.text || "");
 
-        // Only add if we have contact info
-        if (emails.length > 0 || phones.length > 0) {
-          allContacts.push({
-            id: (allContacts.length + 1).toString(),
-            name: result.title || "Unknown Business",
-            email: emails[0],
-            phone: phones[0],
-            url: result.url,
-            summary: result.summary,
-          });
+        // Add basic contact info (enrichment is separate)
+        const basicContact: BasicContact = {
+          id: (allContacts.length + 1).toString(),
+          name: result.title || "Unknown Business",
+          url: result.url,
+          summary: result.summary,
+        };
+
+        // Only include email/phone if enrichContacts is true (for backward compatibility)
+        if (enrichContacts && (emails.length > 0 || phones.length > 0)) {
+          (basicContact as Contact).email = emails[0];
+          (basicContact as Contact).phone = phones[0];
         }
+
+        allContacts.push(basicContact);
       }
 
       processedResults += results.length;

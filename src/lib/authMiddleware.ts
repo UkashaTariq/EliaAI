@@ -1,6 +1,6 @@
 // src/lib/authMiddleware.ts
 import { NextApiRequest, NextApiResponse } from "next";
-import { db } from "./firebaseAdmin";
+import { getSession, getUserWithSubscription } from "./session-utils";
 
 export interface AuthenticatedRequest extends NextApiRequest {
   user?: {
@@ -18,21 +18,21 @@ export function withAuth(
 ) {
   return async (req: AuthenticatedRequest, res: NextApiResponse) => {
     try {
-      // Get identifier from query or body
-      const identifier = req.query.identifier || req.body.identifier;
+      // Get session data
+      const session = await getSession(req, res);
 
-      if (!identifier || typeof identifier !== "string") {
-        return res.status(401).json({ error: "Missing identifier" });
+      if (!session.user?.isLoggedIn) {
+        return res.status(401).json({ error: "No active session" });
       }
 
-      // Verify user exists in database
-      const userDoc = await db.collection("app_installs").doc(identifier).get();
+      // Get user data from Firestore
+      const userWithSubscription = await getUserWithSubscription(session.user.identifier);
 
-      if (!userDoc.exists) {
-        return res.status(401).json({ error: "Invalid identifier" });
+      if (!userWithSubscription) {
+        return res.status(401).json({ error: "Invalid session - user not found" });
       }
 
-      const userData = userDoc.data();
+      const userData = userWithSubscription.user;
 
       if (!userData?.access_token) {
         return res.status(401).json({ error: "Invalid access token" });
@@ -48,11 +48,11 @@ export function withAuth(
         name: userData.name,
       };
 
-      // Update last activity
-      await db.collection("app_installs").doc(identifier).update({
-        updated_at: new Date(),
-        last_activity: new Date(),
-      });
+      // Update session last activity
+      if (session.user) {
+        session.user.lastActivity = Date.now();
+        await session.save();
+      }
 
       return handler(req, res);
     } catch (error) {

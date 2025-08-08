@@ -32,26 +32,21 @@ export default function Home() {
     try {
       console.log("Starting GHL authentication check...");
 
-      // Method 1: Check URL parameters first (OAuth callback)
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlIdentifier = urlParams.get("identifier");
-
-      if (urlIdentifier) {
-        console.log("Found identifier in URL:", urlIdentifier);
-        const response = await fetch(
-          `/api/auth/verify?identifier=${urlIdentifier}`
-        );
-
-        if (response.ok) {
-          console.log("URL identifier is valid, redirecting to dashboard");
-          router.push(`/dashboard?identifier=${urlIdentifier}`);
+      // Method 1: Check for existing session first
+      const sessionResponse = await fetch("/api/auth/session");
+      if (sessionResponse.ok) {
+        const sessionData = await sessionResponse.json();
+        if (sessionData.authenticated) {
+          console.log("Found active session, redirecting to dashboard");
+          router.push("/dashboard");
           return;
-        } else {
-          console.error("Invalid identifier in URL");
         }
       }
 
-      // Method 2: Check for GHL marketplace context
+      // Method 2: Check URL parameters for OAuth callback context
+      const urlParams = new URLSearchParams(window.location.search);
+
+      // Method 3: Check for GHL marketplace context
       const locationId =
         urlParams.get("location_id") || urlParams.get("locationId");
       const userId = urlParams.get("user_id") || urlParams.get("userId");
@@ -60,7 +55,7 @@ export default function Home() {
 
       console.log("Checking GHL context:", { locationId, userId, companyId });
 
-      // Method 3: Try to detect current GHL user via marketplace API
+      // Method 4: Try to detect current GHL user via marketplace API
       if (
         window.location.origin.includes("gohighlevel.com") ||
         window.location.origin.includes("leadconnectorhq.com") ||
@@ -101,7 +96,7 @@ export default function Home() {
         }
       }
 
-      // Method 4: Check if we're in an iframe context (embedded in GHL)
+      // Method 5: Check if we're in an iframe context (embedded in GHL)
       if (window.parent !== window) {
         console.log(
           "Detected iframe context, trying to get GHL parent context..."
@@ -203,7 +198,7 @@ export default function Home() {
         }
       }
 
-      // Method 5: Check document referrer for GHL context
+      // Method 6: Check document referrer for GHL context
       if (document.referrer) {
         console.log("Checking referrer for GHL context:", document.referrer);
 
@@ -247,7 +242,7 @@ export default function Home() {
         }
       }
 
-      // Method 6: Final fallback - try the detect-user API
+      // Method 7: Final fallback - try the detect-user API
       try {
         console.log("Trying detect-user API as final fallback...");
         const detectionResponse = await fetch("/api/auth/detect-user");
@@ -260,7 +255,7 @@ export default function Home() {
             console.log(
               "Fallback detection successful, redirecting to dashboard"
             );
-            router.push(`/dashboard?identifier=${detectionData.identifier}`);
+            router.push(`/dashboard`);
             return;
           }
         }

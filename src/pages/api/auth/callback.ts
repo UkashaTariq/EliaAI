@@ -1,6 +1,12 @@
-// src/pages/api/auth/callback.ts - Enhanced version
+// src/pages/api/auth/callback.ts - Enhanced version with session management
 import type { NextApiRequest, NextApiResponse } from "next";
 import { db } from "../../../lib/firebaseAdmin";
+import {
+  getSession,
+  createUserSession,
+  invalidateUserSessions,
+} from "../../../lib/session-utils";
+import type { AppInstall } from "../../../lib/firestore-schema";
 
 export default async function handler(
   req: NextApiRequest,
@@ -111,7 +117,7 @@ export default async function handler(
     }
 
     // Prepare user data for storage
-    const userData = {
+    const userData: AppInstall = {
       identifier: identifier.toString(),
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token || null,
@@ -130,7 +136,34 @@ export default async function handler(
       created_at: new Date(),
       updated_at: new Date(),
       last_login: new Date(),
+      isActive: true,
     };
+
+    // Check if this is a location change for existing user
+    const existingUserDoc = await db
+      .collection("app_installs")
+      .doc(identifier.toString())
+      .get();
+
+    let isLocationChange = false;
+    if (existingUserDoc.exists) {
+      const existingData = existingUserDoc.data() as AppInstall;
+      isLocationChange = (existingData?.locationId &&
+        existingData.locationId !== userData.locationId) as boolean;
+
+      if (isLocationChange) {
+        console.log("Location change detected:", {
+          old: existingData?.locationId,
+          new: userData.locationId,
+        });
+
+        // Invalidate old sessions for the old location
+        await invalidateUserSessions(
+          identifier.toString(),
+          existingData.locationId
+        );
+      }
+    }
 
     // Store in Firestore
     await db
@@ -140,17 +173,64 @@ export default async function handler(
 
     console.log("User data stored successfully for identifier:", identifier);
 
-    // Always use ngrok URL for redirect
-    const redirectUrl = `https://definite-hedgehog-emerging.ngrok-free.app/?identifier=${identifier}`;
+    // Create new session
+    const sessionId = await createUserSession(
+      identifier.toString(),
+      userData.locationId!,
+      req
+    );
 
-    // Simple redirect without localStorage
+    // Get session and store minimal user data
+    const session = await getSession(req, res);
+    session.user = {
+      identifier: identifier.toString(),
+      locationId: userData.locationId!,
+      isLoggedIn: true,
+      loginTime: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    await session.save();
+
+    console.log("Session created with minimal data:", sessionId);
+
+    // Determine redirect URL based on environment
+    const baseUrl =
+      process.env.NODE_ENV === "production"
+        ? process.env.NEXT_PUBLIC_APP_URL ||
+          "https://definite-hedgehog-emerging.ngrok-free.app"
+        : "https://definite-hedgehog-emerging.ngrok-free.app";
+
+    const redirectUrl = `${baseUrl}/dashboard`;
+
+    // Redirect to dashboard with session
     res.setHeader("Content-Type", "text/html");
     res.status(200).send(`
       <!DOCTYPE html>
       <html>
+        <head>
+          <title>Redirecting...</title>
+        </head>
         <body>
+          <div style="display: flex; justify-content: center; align-items: center; height: 100vh; font-family: Arial, sans-serif;">
+            <div style="text-align: center;">
+              <h2>Authentication Successful</h2>
+              <p>Redirecting to dashboard...</p>
+              <div style="margin-top: 20px;">
+                <div style="border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid #3498db; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+              </div>
+            </div>
+          </div>
+          <style>
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          </style>
           <script>
+            setTimeout(() => {
               window.location.href = '${redirectUrl}';
+            }, 2000);
           </script>
         </body>
       </html>
